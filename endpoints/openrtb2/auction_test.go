@@ -3224,7 +3224,7 @@ func TestParseRequestParseImpInfoError(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader(reqBody))
 
-	resReq, impExtInfoMap, _, errL := deps.parseRequest(req)
+	resReq, impExtInfoMap, _, _, errL := deps.parseRequest(req)
 
 	assert.Nil(t, resReq, "Result request should be nil due to incorrect imp")
 	assert.Nil(t, impExtInfoMap, "Impression info map should be nil due to incorrect imp")
@@ -4735,7 +4735,7 @@ func TestParseRequestMergeBidderParams(t *testing.T) {
 
 			req := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader(tt.givenRequestBody))
 
-			resReq, _, _, errL := deps.parseRequest(req)
+			resReq, _, _, _, errL := deps.parseRequest(req)
 
 			var expIExt, iExt map[string]interface{}
 			err := json.Unmarshal(tt.expectedImpExt, &expIExt)
@@ -4835,7 +4835,7 @@ func TestParseRequestStoredResponses(t *testing.T) {
 
 			req := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader(tt.givenRequestBody))
 
-			_, _, storedResponses, errL := deps.parseRequest(req)
+			_, _, storedResponses, _, errL := deps.parseRequest(req)
 
 			if tt.expectedErrorCount == 0 {
 				assert.Equal(t, tt.expectedStoredResponses, storedResponses, "stored responses should match")
@@ -5064,12 +5064,12 @@ func TestProcessStoredAuctionResponsesErrors(t *testing.T) {
     			    }
     			  }
     			]}`),
-			expectedErrorList: []error{errors.New("Value is not a string: 123")},
+			expectedErrorList: []error{errors.New("request.imp[0] missing required field: \"id\"")},
 		},
 	}
 
 	for _, test := range testCases {
-		_, errorList := deps.processStoredAuctionResponses(nil, test.requestJson)
+		_, _, errorList := deps.processStoredAuctionResponses(nil, test.requestJson)
 		assert.Equalf(t, test.expectedErrorList, errorList, "Error doesn't match: %s\n", test.description)
 	}
 
