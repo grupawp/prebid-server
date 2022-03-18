@@ -205,9 +205,6 @@ func (e *exchange) HoldAuction(ctx context.Context, r AuctionRequest, debugLog *
 
 	e.me.RecordRequestPrivacy(privacyLabels)
 
-	// List of bidders we have requests for.
-	liveAdapters := listBiddersWithRequests(bidderRequests)
-
 	// If we need to cache bids, then it will take some time to call prebid cache.
 	// We should reduce the amount of time the bidders have, to compensate.
 	auctionCtx, cancel := e.makeAuctionContext(ctx, cacheInstructions.cacheBids)

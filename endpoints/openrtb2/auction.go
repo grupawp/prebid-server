@@ -1656,52 +1656,6 @@ func (deps *endpointDeps) processStoredAuctionResponses(ctx context.Context, req
 	return nil, nil, nil
 }
 
-// processStoredAuctionResponses takes the incoming request as JSON with any
-// stored requests/imps already merged into it, scans it to find any stored auction response ids
-// in the request/imps and produces a map of imp IDs to stored auction responses.
-// Note that processStoredAuctionResponses must be called after processStoredRequests
-// because stored imps and stored requests can contain stored auction responses
-// so the stored requests/imps have to be merged into the incoming request prior to processing stored auction responses.
-func (deps *endpointDeps) processStoredAuctionResponses(ctx context.Context, requestJson []byte) (map[string]json.RawMessage, []error) {
-	impInfo, errs := parseImpInfo(requestJson)
-	if len(errs) > 0 {
-		return nil, errs
-	}
-
-	storedAuctionResponseIds := make([]string, 0, 0) //all stored responses ids from all imps
-	//because of bulk fetch responses we need to map imp id to stored resp body
-	impIdToRespId := make(map[string]string)              //imp id to stored resp id
-	impIdToStoredResp := make(map[string]json.RawMessage) //imp id to stored resp body
-	for index, impData := range impInfo {
-
-		if impData.ImpExtPrebid.StoredAuctionResponse != nil {
-			if len(impData.ImpExtPrebid.StoredAuctionResponse.ID) == 0 {
-				return nil, []error{fmt.Errorf("request.imp[%d] has ext.prebid.storedauctionresponse specified, but \"id\" field is missing ", index)}
-			}
-			storedAuctionResponseIds = append(storedAuctionResponseIds, impData.ImpExtPrebid.StoredAuctionResponse.ID)
-
-			impId, err := jsonparser.GetString(impData.Imp, "id")
-			if err != nil {
-				return nil, []error{err}
-			}
-
-			impIdToRespId[impId] = impData.ImpExtPrebid.StoredAuctionResponse.ID
-
-		}
-	}
-	if len(storedAuctionResponseIds) > 0 {
-		storedAuctionResponses, errs := deps.storedRespFetcher.FetchResponses(ctx, storedAuctionResponseIds)
-		if len(errs) > 0 {
-			return nil, errs
-		}
-		for impId, respId := range impIdToRespId {
-			impIdToStoredResp[impId] = storedAuctionResponses[respId]
-		}
-		return impIdToStoredResp, nil
-	}
-	return nil, nil
-}
-
 func (deps *endpointDeps) processStoredRequests(ctx context.Context, requestJson []byte, impInfo []ImpExtPrebidData) ([]byte, map[string]exchange.ImpExtInfo, []error) {
 	// Parse the Stored Request IDs from the BidRequest and Imps.
 	storedBidRequestId, hasStoredBidRequest, err := getStoredRequestId(requestJson)

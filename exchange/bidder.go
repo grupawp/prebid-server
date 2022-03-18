@@ -293,7 +293,6 @@ func (bidder *bidderAdapter) requestBid(ctx context.Context, bidderRequest Bidde
 			errs = append(errs, httpInfo.err)
 		}
 	}
-
 	return seatBid, errs
 }
 

@@ -53,7 +53,6 @@ func buildStoredBidResponses(req AuctionRequest, aliases map[string]string) map[
 }
 
 func prepareStoredResponse(impId string, bidResp json.RawMessage) *httpCallInfo {
-
 	//always one element in reqData because stored response is mapped to single imp
 	reqDataForStoredResp := adapters.RequestData{
 		Method: "POST",
@@ -69,5 +68,4 @@ func prepareStoredResponse(impId string, bidResp json.RawMessage) *httpCallInfo 
 		err: nil,
 	}
 	return respData
-
 }
