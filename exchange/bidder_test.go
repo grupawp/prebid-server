@@ -1338,6 +1338,77 @@ func TestMobileNativeTypes(t *testing.T) {
 	}
 }
 
+func TestRequestBidsStoredBidResponses(t *testing.T) {
+	respBody := "{\"bid\":false}"
+	respStatus := 200
+	server := httptest.NewServer(mockHandler(respStatus, "getBody", respBody))
+	defer server.Close()
+
+	bidRespId1 := json.RawMessage(`{"id": "resp_id1", "seatbid": [{"bid": [{"id": "bid_id1"}], "seat": "testBidder1"}], "bidid": "123", "cur": "USD"}`)
+	bidRespId2 := json.RawMessage(`{"id": "resp_id2", "seatbid": [{"bid": [{"id": "bid_id2_1"},{"id": "bid_id2_2"}], "seat": "testBidder2"}], "bidid": "124", "cur": "USD"}`)
+
+	testCases := []struct {
+		description           string
+		mockBidderRequest     *openrtb2.BidRequest
+		bidderStoredResponses map[string]json.RawMessage
+		expectedBidIds        []string
+		expectedImpIds        []string
+	}{
+		{
+			description: "Single imp with stored bid response",
+			mockBidderRequest: &openrtb2.BidRequest{
+				Imp: nil,
+				App: &openrtb2.App{},
+			},
+			bidderStoredResponses: map[string]json.RawMessage{
+				"bidResponseId1": bidRespId1,
+			},
+			expectedBidIds: []string{"bid_id1"},
+			expectedImpIds: []string{"bidResponseId1"},
+		},
+		{
+			description: "Single imp with multiple stored bid responses",
+			mockBidderRequest: &openrtb2.BidRequest{
+				Imp: nil,
+				App: &openrtb2.App{},
+			},
+			bidderStoredResponses: map[string]json.RawMessage{
+				"bidResponseId2": bidRespId2,
+			},
+			expectedBidIds: []string{"bid_id2_1", "bid_id2_2"},
+			expectedImpIds: []string{"bidResponseId2", "bidResponseId2"},
+		},
+	}
+
+	for _, tc := range testCases {
+
+		bidderImpl := &goodSingleBidderWithStoredBidResp{}
+		bidder := adaptBidder(bidderImpl, server.Client(), &config.Configuration{}, &metricsConfig.NilMetricsEngine{}, openrtb_ext.BidderAppnexus, nil)
+		currencyConverter := currency.NewRateConverter(&http.Client{}, "", time.Duration(0))
+
+		bidderReq := BidderRequest{
+			BidRequest:            tc.mockBidderRequest,
+			BidderName:            openrtb_ext.BidderAppnexus,
+			BidderStoredResponses: tc.bidderStoredResponses,
+		}
+		seatBids, _ := bidder.requestBid(
+			context.Background(),
+			bidderReq,
+			1.0,
+			currencyConverter.Rates(),
+			&adapters.ExtraRequestInfo{},
+			true,
+			true,
+		)
+
+		for index, bid := range seatBids.bids {
+			assert.Equal(t, tc.expectedBidIds[index], bid.bid.ID, tc.description)
+			assert.Equal(t, tc.expectedImpIds[index], bid.bid.ImpID, tc.description)
+		}
+	}
+
+}
+
 func TestErrorReporting(t *testing.T) {
 	bidder := adaptBidder(&bidRejector{}, nil, &config.Configuration{}, &metricsConfig.NilMetricsEngine{}, openrtb_ext.BidderAppnexus, nil)
 	currencyConverter := currency.NewRateConverter(&http.Client{}, "", time.Duration(0))
@@ -1776,10 +1847,11 @@ func wrapWithBidderInfo(bidder adapters.Bidder) adapters.Bidder {
 }
 
 type goodSingleBidder struct {
-	bidRequest   *openrtb2.BidRequest
-	httpRequest  *adapters.RequestData
-	httpResponse *adapters.ResponseData
-	bidResponse  *adapters.BidderResponse
+	bidRequest            *openrtb2.BidRequest
+	httpRequest           *adapters.RequestData
+	httpResponse          *adapters.ResponseData
+	bidResponse           *adapters.BidderResponse
+	hasStoredBidResponses bool
 }
 
 func (bidder *goodSingleBidder) MakeRequests(request *openrtb2.BidRequest, reqInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
@@ -1790,6 +1862,31 @@ func (bidder *goodSingleBidder) MakeRequests(request *openrtb2.BidRequest, reqIn
 func (bidder *goodSingleBidder) MakeBids(internalRequest *openrtb2.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
 	bidder.httpResponse = response
 	return bidder.bidResponse, nil
+}
+
+type goodSingleBidderWithStoredBidResp struct {
+}
+
+func (bidder *goodSingleBidderWithStoredBidResp) MakeRequests(request *openrtb2.BidRequest, reqInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
+	return nil, nil
+}
+
+func (bidder *goodSingleBidderWithStoredBidResp) MakeBids(internalRequest *openrtb2.BidRequest, externalRequest *adapters.RequestData, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
+	var bidResp openrtb2.BidResponse
+	if err := json.Unmarshal(response.Body, &bidResp); err != nil {
+		return nil, []error{err}
+	}
+	bidResponse := adapters.NewBidderResponseWithBidsCapacity(5)
+
+	for _, sb := range bidResp.SeatBid {
+		for i := range sb.Bid {
+			bidResponse.Bids = append(bidResponse.Bids, &adapters.TypedBid{
+				Bid:     &sb.Bid[i],
+				BidType: openrtb_ext.BidTypeVideo,
+			})
+		}
+	}
+	return bidResponse, nil
 }
 
 type goodMultiHTTPCallsBidder struct {
