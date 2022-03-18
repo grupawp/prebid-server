@@ -567,20 +567,19 @@ func TestCleanOpenRTBRequestsWithFPD(t *testing.T) {
 }
 
 func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
-
-	bidRespId1 := json.RawMessage(`{"id": "resp_id1", "seatbid": [{"bid": [{"id": "bid_id1"}], "seat": "testBidder1"}], "bidid": "123", "cur": "USD"}`)
-	bidRespId2 := json.RawMessage(`{"id": "resp_id2", "seatbid": [{"bid": [{"id": "bid_id2_1"},{"id": "bid_id2_2"}], "seat": "testBidder2"}], "bidid": "124", "cur": "USD"}`)
+	bidRespId1 := json.RawMessage(`{"id": "resp_id1"}`)
+	bidRespId2 := json.RawMessage(`{"id": "resp_id2"}`)
 
 	testCases := []struct {
 		description            string
 		storedBidResponses     map[string]map[string]json.RawMessage
 		imps                   []openrtb2.Imp
-		expectedBidderRequests []BidderRequest
+		expectedBidderRequests map[string]BidderRequest
 	}{
 		{
 			description: "Request with imp with one bidder stored bid response",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id1": {"appnexus": bidRespId1},
+				"imp-id1": {"bidderA": bidRespId1},
 			},
 			imps: []openrtb2.Imp{
 				{
@@ -592,10 +591,10 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 					Ext: json.RawMessage(`"prebid": {}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: nil},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId1},
 				},
@@ -604,7 +603,7 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		{
 			description: "Request with imps with and without stored bid response for one bidder",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id1": {"appnexus": bidRespId1},
+				"imp-id1": {"bidderA": bidRespId1},
 			},
 			imps: []openrtb2.Imp{
 				{
@@ -617,15 +616,15 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 				},
 				{
 					ID:  "imp-id2",
-					Ext: json.RawMessage(`{"prebid":{"aliases":{"brightroll":"appnexus"}}}`),
+					Ext: json.RawMessage(`{"prebid":{"aliases":{"brightroll":"bidderA"}}}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: []openrtb2.Imp{
-						{ID: "imp-id2", Ext: json.RawMessage(`{"prebid":{"aliases":{"brightroll":"appnexus"}}}`)},
+						{ID: "imp-id2", Ext: json.RawMessage(`{"prebid":{"aliases":{"brightroll":"bidderA"}}}`)},
 					}},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId1},
 				},
@@ -634,7 +633,7 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		{
 			description: "Request with imp with 2 bidders stored bid response",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id1": {"appnexus": bidRespId1, "rubicon": bidRespId2},
+				"imp-id1": {"bidderA": bidRespId1, "bidderB": bidRespId2},
 			},
 			imps: []openrtb2.Imp{
 				{
@@ -646,16 +645,17 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 					Ext: json.RawMessage(`"prebid": {}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: nil},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
-						"imp-id1": bidRespId1},
+						"imp-id1": bidRespId1,
+					},
 				},
-				{
+				"bidderB": {
 					BidRequest: &openrtb2.BidRequest{Imp: nil},
-					BidderName: "rubicon",
+					BidderName: "bidderB",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId2},
 				},
@@ -664,7 +664,7 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		{
 			description: "Request with 2 imps: with 2 bidders stored bid response and imp without stored responses",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id1": {"appnexus": bidRespId1, "rubicon": bidRespId2},
+				"imp-id1": {"bidderA": bidRespId1, "bidderB": bidRespId2},
 			},
 			imps: []openrtb2.Imp{
 				{
@@ -677,21 +677,21 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 				},
 				{
 					ID:  "imp-id2",
-					Ext: json.RawMessage(`{"appnexus": {"placementId":"123"}}`),
+					Ext: json.RawMessage(`{"bidderA": {"placementId":"123"}}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: []openrtb2.Imp{
 						{ID: "imp-id2", Ext: json.RawMessage(`{"bidder":{"placementId":"123"}}`)},
 					}},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId1},
 				},
-				{
+				"bidderB": {
 					BidRequest: &openrtb2.BidRequest{Imp: nil},
-					BidderName: "rubicon",
+					BidderName: "bidderB",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId2},
 				},
@@ -700,24 +700,24 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		{
 			description: "Request with 2 imps: with 1 bidders stored bid response and imp without stored responses and with the same bidder",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id2": {"appnexus": bidRespId2},
+				"imp-id2": {"bidderA": bidRespId2},
 			},
 			imps: []openrtb2.Imp{
 				{
 					ID:  "imp-id1",
-					Ext: json.RawMessage(`{"appnexus": {"placementId":"123"}}`),
+					Ext: json.RawMessage(`{"bidderA": {"placementId":"123"}}`),
 				},
 				{
 					ID:  "imp-id2",
 					Ext: json.RawMessage(`"prebid": {}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: []openrtb2.Imp{
 						{ID: "imp-id1", Ext: json.RawMessage(`{"bidder":{"placementId":"123"}}`)},
 					}},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id2": bidRespId2},
 				},
@@ -726,8 +726,8 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		{
 			description: "Request with 2 imps with stored responses and with the same bidder",
 			storedBidResponses: map[string]map[string]json.RawMessage{
-				"imp-id1": {"appnexus": bidRespId1},
-				"imp-id2": {"appnexus": bidRespId2},
+				"imp-id1": {"bidderA": bidRespId1},
+				"imp-id2": {"bidderA": bidRespId2},
 			},
 			imps: []openrtb2.Imp{
 				{
@@ -739,10 +739,10 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 					Ext: json.RawMessage(`"prebid": {}`),
 				},
 			},
-			expectedBidderRequests: []BidderRequest{
-				{
+			expectedBidderRequests: map[string]BidderRequest{
+				"bidderA": {
 					BidRequest: &openrtb2.BidRequest{Imp: nil},
-					BidderName: "appnexus",
+					BidderName: "bidderA",
 					BidderStoredResponses: map[string]json.RawMessage{
 						"imp-id1": bidRespId1,
 						"imp-id2": bidRespId2,
@@ -763,10 +763,11 @@ func TestCleanOpenRTBRequestsWithBidResponses(t *testing.T) {
 		}
 		actualBidderRequests, _, err := cleanOpenRTBRequests(context.Background(), auctionReq, nil, bidderToSyncerKey, &permissions, &metricsMock, gdpr.SignalNo, config.Privacy{}, nil)
 		assert.Empty(t, err, "No errors should be returned")
-		for index, expBidderRequest := range test.expectedBidderRequests {
-			assert.Equal(t, expBidderRequest.BidRequest.Imp, actualBidderRequests[index].BidRequest.Imp, "incorrect Impressions")
-			assert.Equal(t, expBidderRequest.BidderStoredResponses, actualBidderRequests[index].BidderStoredResponses, "incorrect Bidder Stored Responses")
-			assert.Equal(t, expBidderRequest.BidderName, actualBidderRequests[index].BidderName, "incorrect Bidder name")
+		assert.Len(t, actualBidderRequests, len(test.expectedBidderRequests), "result len doesn't match for testCase %s", test.description)
+		for _, actualBidderRequest := range actualBidderRequests {
+			bidderName := string(actualBidderRequest.BidderName)
+			assert.Equal(t, test.expectedBidderRequests[bidderName].BidRequest.Imp, actualBidderRequest.BidRequest.Imp, "incorrect Impressions for testCase %s", test.description)
+			assert.Equal(t, test.expectedBidderRequests[bidderName].BidderStoredResponses, actualBidderRequest.BidderStoredResponses, "incorrect Bidder Stored Responses for testCase %s", test.description)
 		}
 	}
 }
