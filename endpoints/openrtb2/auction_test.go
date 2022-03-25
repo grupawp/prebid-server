@@ -5209,7 +5209,7 @@ func TestProcessStoredAuctionAndBidResponsesErrors(t *testing.T) {
 	}
 
 	for _, test := range testCases {
-		_, _, errorList := deps.processStoredAuctionResponses(nil, test.requestJson)
+		_, _, errorList := deps.processStoredResponses(nil, test.requestJson)
 		assert.Equalf(t, test.expectedErrorList, errorList, "Error doesn't match: %s\n", test.description)
 	}
 

@@ -180,8 +180,10 @@ func (bidder *bidderAdapter) requestBid(ctx context.Context, bidderRequest Bidde
 			dataLen = dataLen + len(bidderRequest.BidderStoredResponses)
 			responseChannel = make(chan *httpCallInfo, dataLen)
 		}
-		for impId, bidresp := range bidderRequest.BidderStoredResponses {
-			go func() { responseChannel <- prepareStoredResponse(impId, bidresp) }()
+		for impId, bidResp := range bidderRequest.BidderStoredResponses {
+			go func(id string, resp json.RawMessage) {
+				responseChannel <- prepareStoredResponse(impId, bidResp)
+			}(impId, bidResp)
 		}
 	}
 

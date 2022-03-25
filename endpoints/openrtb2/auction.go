@@ -306,7 +306,7 @@ func (deps *endpointDeps) parseRequest(httpRequest *http.Request) (req *openrtb_
 	}
 
 	//Stored auction responses should be processed after stored requests due to possible impression modification
-	storedAuctionResponses, storedBidResponses, errs = deps.processStoredAuctionResponses(ctx, requestJson)
+	storedAuctionResponses, storedBidResponses, errs = deps.processStoredResponses(ctx, requestJson)
 	if len(errs) > 0 {
 		return nil, nil, nil, nil, errs
 	}
@@ -331,7 +331,11 @@ func (deps *endpointDeps) parseRequest(httpRequest *http.Request) (req *openrtb_
 
 	lmt.ModifyForIOS(req.BidRequest)
 
-	errL := deps.validateRequest(req, false, len(storedAuctionResponses) > 0)
+	var hasStoredResponses bool
+	if len(storedAuctionResponses) > 0 {
+		hasStoredResponses = true
+	}
+	errL := deps.validateRequest(req, false, hasStoredResponses)
 	if len(errL) > 0 {
 		errs = append(errs, errL...)
 	}
@@ -1577,13 +1581,13 @@ func getJsonSyntaxError(testJSON []byte) (bool, string) {
 	return false, ""
 }
 
-// processStoredAuctionResponses takes the incoming request as JSON with any
+// processStoredResponses takes the incoming request as JSON with any
 // stored requests/imps already merged into it, scans it to find any stored auction response ids
 // in the request/imps and produces a map of imp IDs to stored auction responses.
-// Note that processStoredAuctionResponses must be called after processStoredRequests
+// Note that processStoredResponses must be called after processStoredRequests
 // because stored imps and stored requests can contain stored auction responses
 // so the stored requests/imps have to be merged into the incoming request prior to processing stored auction responses.
-func (deps *endpointDeps) processStoredAuctionResponses(ctx context.Context, requestJson []byte) (map[string]json.RawMessage, map[string]map[string]json.RawMessage, []error) {
+func (deps *endpointDeps) processStoredResponses(ctx context.Context, requestJson []byte) (map[string]json.RawMessage, map[string]map[string]json.RawMessage, []error) {
 	impInfo, errs := parseImpInfo(requestJson)
 	if len(errs) > 0 {
 		return nil, nil, errs
