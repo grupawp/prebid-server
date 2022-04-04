@@ -177,6 +177,7 @@ type BidderRequest struct {
 
 func (e *exchange) HoldAuction(ctx context.Context, r AuctionRequest, debugLog *DebugLog) (*openrtb2.BidResponse, error) {
 	var err error
+
 	requestExt, err := extractBidRequestExt(r.BidRequest)
 	if err != nil {
 		return nil, err

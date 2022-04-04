@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 
+	"github.com/golang/glog"
 	"github.com/mxmCherry/openrtb/v15/openrtb2"
 	"github.com/prebid/go-gdpr/vendorconsent"
 
@@ -66,8 +67,16 @@ func cleanOpenRTBRequests(ctx context.Context,
 	allBidderRequests, errs = getAuctionBidderRequests(req, requestExt, bidderToSyncerKey, impsByBidder, aliases)
 
 	if len(allBidderRequests) == 0 {
+		glog.Infof("allBidderRequests - none!")
 		return
+	} else {
+		glog.Infof("allBidderRequests %d", len(allBidderRequests))
 	}
+
+	/*
+		debugJSON, _ := json.Marshal(allBidderRequests)
+		glog.Info(debugJSON)
+	*/
 
 	gdprSignal, err := extractGDPR(req.BidRequest)
 	if err != nil {
@@ -111,6 +120,7 @@ func cleanOpenRTBRequests(ctx context.Context,
 	// bidder level privacy policies
 	allowedBidderRequests = make([]BidderRequest, 0, len(allBidderRequests))
 	for _, bidderRequest := range allBidderRequests {
+		glog.Infof("Privacy check for bidder %s", bidderRequest.BidderCoreName)
 		bidRequestAllowed := true
 
 		// CCPA
@@ -118,6 +128,7 @@ func cleanOpenRTBRequests(ctx context.Context,
 
 		// GDPR
 		if gdprEnforced {
+			glog.Infof("GDPR enforcement")
 			weakVendorEnforcement := false
 			if account != nil {
 				for _, vendor := range account.GDPR.BasicEnforcementVendors {
@@ -127,9 +138,12 @@ func cleanOpenRTBRequests(ctx context.Context,
 					}
 				}
 			}
+			glog.Infof("weakVendorEnforcement", weakVendorEnforcement)
 			var publisherID = req.LegacyLabels.PubID
+			glog.Infof("publisherID %s", publisherID)
 			bidReq, geo, id, err := gDPR.AuctionActivitiesAllowed(ctx, bidderRequest.BidderCoreName, bidderRequest.BidderName, publisherID, gdprSignal, consent, weakVendorEnforcement, aliasesGVLIDs)
 			bidRequestAllowed = bidReq
+			glog.Infof("bidRequestAllowed", bidRequestAllowed)
 
 			if err == nil {
 				privacyEnforcement.GDPRGeo = !geo
@@ -153,6 +167,8 @@ func cleanOpenRTBRequests(ctx context.Context,
 			allowedBidderRequests = append(allowedBidderRequests, bidderRequest)
 		}
 	}
+
+	glog.Infof("allowedBidderRequests %d", len(allowedBidderRequests))
 
 	return
 }

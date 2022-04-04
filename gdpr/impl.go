@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/golang/glog"
 	"github.com/prebid/go-gdpr/api"
 	"github.com/prebid/go-gdpr/consentconstants"
 	tcf2ConsentConstants "github.com/prebid/go-gdpr/consentconstants/tcf2"
@@ -51,22 +52,27 @@ func (p *permissionsImpl) BidderSyncAllowed(ctx context.Context, bidder openrtb_
 
 func (p *permissionsImpl) AuctionActivitiesAllowed(ctx context.Context, bidderCoreName openrtb_ext.BidderName, bidder openrtb_ext.BidderName, PublisherID string, gdprSignal Signal, consent string, weakVendorEnforcement bool, aliasGVLIDs map[string]uint16) (allowBidReq bool, passGeo bool, passID bool, err error) {
 	if _, ok := p.cfg.NonStandardPublisherMap[PublisherID]; ok {
+		glog.Info("AuctionActivitiesAllowed - non standard publisher")
 		return true, true, true, nil
 	}
 
 	gdprSignal = SignalNormalize(gdprSignal, p.cfg)
 
 	if gdprSignal == SignalNo {
+		glog.Info("AuctionActivitiesAllowed - no gdpr")
 		return true, true, true, nil
 	}
 
 	if consent == "" && gdprSignal == SignalYes {
+		glog.Info("AuctionActivitiesAllowed - gdpr, but no consent")
 		return false, false, false, nil
 	}
 
 	if id, ok := p.resolveVendorId(bidderCoreName, bidder, aliasGVLIDs); ok {
+		glog.Info("AuctionActivitiesAllowed: Detected vendor ID", id)
 		return p.allowActivities(ctx, id, bidderCoreName, consent, weakVendorEnforcement)
 	} else if weakVendorEnforcement {
+		glog.Info("AuctionActivitiesAllowed: cannot get vendor ID")
 		return p.allowActivities(ctx, 0, bidderCoreName, consent, weakVendorEnforcement)
 	}
 
@@ -115,6 +121,7 @@ func (p *permissionsImpl) allowSync(ctx context.Context, vendorID uint16, consen
 func (p *permissionsImpl) allowActivities(ctx context.Context, vendorID uint16, bidder openrtb_ext.BidderName, consent string, weakVendorEnforcement bool) (allowBidRequest bool, passGeo bool, passID bool, err error) {
 	parsedConsent, vendor, err := p.parseVendor(ctx, vendorID, consent)
 	if err != nil {
+		glog.Infof("allowActivities: cannot parse Vendor ", vendorID)
 		return false, false, false, err
 	}
 
@@ -123,11 +130,13 @@ func (p *permissionsImpl) allowActivities(ctx context.Context, vendorID uint16, 
 		if weakVendorEnforcement && parsedConsent.Version() == 2 {
 			vendor = vendorTrue{}
 		} else {
+			glog.Info("allowActivities: not valid TCF string")
 			return false, false, false, nil
 		}
 	}
 
 	if !p.cfg.TCF2.Enabled {
+		glog.Info("allowActivities: TCF not enabled")
 		return true, false, false, nil
 	}
 
@@ -143,12 +152,18 @@ func (p *permissionsImpl) allowActivities(ctx context.Context, vendorID uint16, 
 	} else {
 		passGeo = true
 	}
+
+	glog.Infof("allowActivities: passGeo", passGeo)
+
 	if p.cfg.TCF2.Purpose2.EnforcePurpose == config.TCF2FullEnforcement {
 		vendorException := p.isVendorException(consentconstants.Purpose(2), bidder)
 		allowBidRequest = p.checkPurpose(consentMeta, vendor, vendorID, consentconstants.Purpose(2), vendorException, weakVendorEnforcement)
 	} else {
 		allowBidRequest = true
 	}
+
+	glog.Infof("allowActivities: allowBidRequest", allowBidRequest)
+
 	for i := 2; i <= 10; i++ {
 		vendorException := p.isVendorException(consentconstants.Purpose(i), bidder)
 		if p.checkPurpose(consentMeta, vendor, vendorID, consentconstants.Purpose(i), vendorException, weakVendorEnforcement) {
@@ -156,6 +171,8 @@ func (p *permissionsImpl) allowActivities(ctx context.Context, vendorID uint16, 
 			break
 		}
 	}
+
+	glog.Infof("allowActivities: passID", passID)
 
 	return
 }
@@ -243,16 +260,19 @@ func (p *permissionsImpl) parseVendor(ctx context.Context, vendorID uint16, cons
 			Consent: consent,
 			Cause:   err,
 		}
+		glog.Info("parseVendor: malformed consent")
 		return
 	}
 
 	version := parsedConsent.Version()
 	if version != 2 {
+		glog.Info("parseVendor: wrong TCF version")
 		return
 	}
 
 	vendorList, err := p.fetchVendorList[version](ctx, parsedConsent.VendorListVersion())
 	if err != nil {
+		glog.Info("parseVendor: cannot fetch vendor list")
 		return
 	}
 
