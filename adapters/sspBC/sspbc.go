@@ -85,8 +85,6 @@ func formatSsbcRequest(a *SspbcAdapter, request *openrtb2.BidRequest) (*openrtb2
 	var siteId string
 	var isTest int
 
-	glog.Infof("SSPBC: format request")
-
 	// check if adSlots and adSizes maps are initialized
 	if a.adSlots == nil {
 		a.adSlots = make(map[string]AdSlotData)
@@ -94,9 +92,6 @@ func formatSsbcRequest(a *SspbcAdapter, request *openrtb2.BidRequest) (*openrtb2
 	if a.adSizes == nil {
 		a.adSizes = make(map[string]int)
 	}
-
-	// read UID (statid) from request
-	glog.Infof("SSPBC: read UID - %s", request.User.BuyerUID)
 
 	for i, impI := range request.Imp {
 		// read ext data for the impression
@@ -134,17 +129,14 @@ func formatSsbcRequest(a *SspbcAdapter, request *openrtb2.BidRequest) (*openrtb2
 
 		// check imp size and number of times it has been used
 		impSize := getImpSize(impI)
-		glog.Infof("SSPBC: imp size %s", impSize)
 
 		// save slot data
 		a.adSizes[impSize] = a.adSizes[impSize] + 1
 		if a.adSlots[impI.ID].PbSlot != "" {
 			extData = a.adSlots[impI.ID]
-			glog.Infof("SSPBC: this slot has already been called - %s  %s", extData.PbSlot, extData.PbSize)
 		} else {
 			extData.PbSlot = impI.TagID
 			extData.PbSize = fmt.Sprintf("%s_%d", impSize, a.adSizes[impSize])
-			glog.Infof("SSPBC: this is a new adslot - %s  %s", extData.PbSlot, extData.PbSize)
 			a.adSlots[impI.ID] = extData
 		}
 
@@ -187,11 +179,9 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 	var mcEncoded string
 
 	if strings.Contains(bid.AdM, "<!--preformatted-->") {
-		glog.Infof("SSPBC: banner ad is already formatted: %s", bid.AdM)
+		// Banner ad is already formatted
 		return bid.AdM, nil
 	}
-
-	glog.Infof("SSPBC: create banner ad (MCAD payload)")
 
 	// create McAd payload
 	mcad.Id = request.ID
@@ -206,7 +196,6 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 	}
 
 	mcEncoded = base64.URLEncoding.EncodeToString(mcMarshalled)
-	glog.Infof("SSPBC: MCAD marshaled and encoded")
 
 	const header = `<html><head>
 	<title></title>
@@ -255,8 +244,6 @@ func Builder(bidderName openrtb_ext.BidderName, config config.Adapter) (adapters
 
 func (a *SspbcAdapter) MakeRequests(request *openrtb2.BidRequest, requestInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
 	var errors []error
-
-	glog.Infof("SSPBC: build request")
 
 	formattedRequest, err := formatSsbcRequest(a, request)
 	if err != nil {
@@ -324,7 +311,6 @@ func (a *SspbcAdapter) MakeBids(internalRequest *openrtb2.BidRequest, externalRe
 		Long term SN should be returned in bid.ext
 	*/
 
-	glog.Infof("SSPBC: get response")
 
 	var errors []error
 
@@ -362,7 +348,6 @@ func (a *SspbcAdapter) MakeBids(internalRequest *openrtb2.BidRequest, externalRe
 
 			if BidExt, ok := a.adSlots[BidId]; ok {
 				var BidIdStored = BidExt.PbSlot
-				glog.Infof("SSPBC: recover old bid.impid - %s -> %s", BidId, BidIdStored)
 				bid.ImpID = BidIdStored
 			} else {
 				glog.Errorf("SSPBC: BidExt for this bid.impid not found - %s", BidId)
@@ -375,7 +360,6 @@ func (a *SspbcAdapter) MakeBids(internalRequest *openrtb2.BidRequest, externalRe
 				errors = append(errors, err)
 			} else {
 				var adCreationError error
-				glog.Infof("SSPBC: Read Ext data for this bid - %s", BidDataExt)
 
 				// Prepare ads (using different methods for banner, native, video)
 
