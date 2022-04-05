@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"path/filepath"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -226,9 +227,17 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 		Therefore, we are not creating window.gdpr. This will force banner creative to execute it's own call to TCF2
 	*/
 	
-	bannerTemplate, err := template.ParseFiles("adapters/sspBC/banner.html")
+
+	// find absolute path to template file
+	absPath, err := filepath.Abs("./adapters/sspBC/banner.html")
 	if err != nil {
-		glog.Errorf("SSPBC: Cannot load banner template")
+		glog.Errorf("SSPBC: Cannot get path to banner template file")
+		return bid.AdM, err
+	}
+
+	bannerTemplate, err := template.ParseFiles(absPath)
+	if err != nil {
+		glog.Errorf("SSPBC: Cannot load banner template - %s", err)
 		return bid.AdM, err
 	}
 
