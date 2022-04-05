@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"path/filepath"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/golang/glog"
@@ -228,18 +228,18 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 	*/
 	
 
-	// find absolute path to template file
-	absPath, err := filepath.Abs("./adapters/sspBC/banner.html")
-	if err != nil {
-		glog.Errorf("SSPBC: Cannot get path to banner template file")
-		return bid.AdM, err
+	// find path to template file
+	pathToTemplate := "./adapters/sspBC/bannerTemplate.html"
+	workingDir, err := os.Getwd()
+	if (err == nil && strings.HasSuffix(workingDir, "sspBC")) { 
+		// this is a test running in adapter's directory
+		pathToTemplate = "bannerTemplate.html"
+	} else if (err!= nil) {
+		// this error does not break createBannerAd flow
+		glog.Errorf("SSPBC: Cannot get working directory, assuming default path")	
 	}
 
-	bannerTemplate, err := template.ParseFiles(absPath)
-	if err != nil {
-		glog.Errorf("SSPBC: Cannot load banner template - %s", err)
-		return bid.AdM, err
-	}
+	bannerTemplate := template.Must(template.ParseFiles(pathToTemplate))
 
 	var filledTemplate bytes.Buffer
 	err = bannerTemplate.Execute(&filledTemplate, bannerData)
