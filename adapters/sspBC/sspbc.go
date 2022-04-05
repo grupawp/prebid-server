@@ -1,13 +1,14 @@
 package sspBC
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/golang/glog"
 
@@ -32,6 +33,18 @@ type AdSlotData struct {
 	PbSlot string `json:"pbslot"`
 	PbSize string `json:"pbsize"`
 }
+
+// Banner Template payload
+type TemplatePayload struct {
+	SiteId string `json:"siteid"`
+	SlotId string `json:"slotid"`
+	AdLabel string `json:"adlabel"`
+	PubId string `json:"pubid"`
+	Page string `json:"page"`
+	Referer string `json:"referer"`
+	McAd string `json:"mcad"`
+}
+
 
 // Ext data in request.imp
 type SsbcRequestImpExt struct {
@@ -59,21 +72,22 @@ type SspbcAdapter struct {
 func getImpSize(Imp openrtb2.Imp) string {
 
 	if Imp.Video != nil {
-		sizeVideo := fmt.Sprintf("%dx%d", Imp.Video.W, Imp.Video.H)
-		return sizeVideo
+		return fmt.Sprintf("%dx%d", Imp.Video.W, Imp.Video.H)
 	}
 
 	if Imp.Banner != nil {
+		sb := strings.Builder{}
 		areaMax := int64(0)
-		sizeBanner := "1x1"
+		sb.WriteString("1x1")
 		for _, sizeI := range Imp.Banner.Format {
 			areaI := sizeI.W * sizeI.H
 			if areaI > areaMax {
 				areaMax = areaI
-				sizeBanner = fmt.Sprintf("%dx%d", sizeI.W, sizeI.H)
+				sb.Reset()
+				sb.WriteString(fmt.Sprintf("%dx%d", sizeI.W, sizeI.H))
 			}
 		}
-		return sizeBanner
+		return sb.String()
 	}
 
 	// default fallback
@@ -174,9 +188,7 @@ func formatSsbcRequest(a *SspbcAdapter, request *openrtb2.BidRequest) (*openrtb2
 }
 
 func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.BidRequest, seat string) (string, error) {
-	var mid string
 	var mcad McAd
-	var mcEncoded string
 
 	if strings.Contains(bid.AdM, "<!--preformatted-->") {
 		// Banner ad is already formatted
@@ -192,43 +204,42 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 	mcMarshalled, err := json.Marshal(mcad)
 	if err != nil {
 		glog.Errorf("SSPBC: Cannot Marshal mcad!")
-		return "", err
+		return bid.AdM, err
 	}
 
-	mcEncoded = base64.URLEncoding.EncodeToString(mcMarshalled)
+	mcEncoded := base64.URLEncoding.EncodeToString(mcMarshalled)
 
-	const header = `<html><head>
-	<title></title>
-	<meta charset="UTF-8">
-	  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-	  <style>
-	  body {
-	  background-color: transparent;
-	  margin: 0;
-	  padding: 0;
+	bannerData := &TemplatePayload{
+		SiteId: ext.SiteId,
+		SlotId: ext.SlotId,
+		AdLabel: ext.AdLabel,
+		PubId: ext.PublisherId,
+		Page: request.Site.Page,
+		Referer: request.Site.Ref,
+		McAd: mcEncoded,
 	}
-  </style>
-	<script>`
-
-	mid = fmt.Sprintf("window.rekid = %s; window.slot = %s; window.adlabel = '%s'; window.pubid = '%s'; window.responseTimestamp = %d; ", ext.SiteId, ext.SlotId, ext.AdLabel, ext.PublisherId, time.Now().UnixMilli())
-	mid += fmt.Sprintf("window.wp_sn = 'sspbc_go'; window.page = '%s'; window.ref = '%s'; ", request.Site.Page, request.Site.Ref)
-	mid += fmt.Sprintf("window.mcad = JSON.parse(atob('%s'));", mcEncoded)
 
 	/*
-		Prebidserver bidders have access only to gdpr data in user ext, which is not what we need (as mcad uses prebid.js gdpr format)
+		Prepare banner html, using template file
 
+		Note: Prebidserver bidders have access only to gdpr data in user ext, which is not what we need (as mcad uses prebid.js gdpr format)
 		Therefore, we are not creating window.gdpr. This will force banner creative to execute it's own call to TCF2
 	*/
+	
+	bannerTemplate, err := template.ParseFiles("adapters/sspBC/banner.html")
+	if err != nil {
+		glog.Errorf("SSPBC: Cannot load banner template")
+		return bid.AdM, err
+	}
 
-	const footer = `</script>
-    </head>
-    <body>
-    <div id="c"></div>
-    <script id="wpjslib" crossorigin src="//std.wpcdn.pl/wpjslib/wpjslib-inline.js" async defer></script>
-  </body>
-  </html>`
+	var filledTemplate bytes.Buffer
+	err = bannerTemplate.Execute(&filledTemplate, bannerData)
+	if err != nil {
+		glog.Errorf("SSPBC: Cannot execute banner template")
+		return bid.AdM, err
+	}
 
-	return header + mid + footer, nil
+	return filledTemplate.String(), nil
 }
 
 // ---------------ADAPTER INTERFACE------------------
