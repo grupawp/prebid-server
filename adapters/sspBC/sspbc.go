@@ -248,6 +248,10 @@ func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.Bid
 		return bid.AdM, err
 	}
 
+	/* 
+	byteTemplate := []byte(filledTemplate.String())
+	fmt.Println(base64.StdEncoding.EncodeToString(byteTemplate)) */
+
 	return filledTemplate.String(), nil
 }
 
