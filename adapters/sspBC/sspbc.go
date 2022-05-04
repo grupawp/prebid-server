@@ -37,15 +37,14 @@ type AdSlotData struct {
 
 // Banner Template payload
 type TemplatePayload struct {
-	SiteId string `json:"siteid"`
-	SlotId string `json:"slotid"`
+	SiteId  string `json:"siteid"`
+	SlotId  string `json:"slotid"`
 	AdLabel string `json:"adlabel"`
-	PubId string `json:"pubid"`
-	Page string `json:"page"`
+	PubId   string `json:"pubid"`
+	Page    string `json:"page"`
 	Referer string `json:"referer"`
-	McAd string `json:"mcad"`
+	McAd    string `json:"mcad"`
 }
-
 
 // Ext data in request.imp
 type SsbcRequestImpExt struct {
@@ -65,13 +64,232 @@ type SspbcAdapter struct {
 	endpoint string
 	// adslots mapping
 	// map key is slot id (as sent and received from proxy)
-	adSlots map[string]AdSlotData
-	adSizes map[string]int
+	adSlots        map[string]AdSlotData
+	adSizes        map[string]int
+	bannerTemplate *template.Template
 }
 
-// ---------------INTERNAL METHODS-------------------
-func getImpSize(Imp openrtb2.Imp) string {
+// ---------------ADAPTER INTERFACE------------------
+// Builder builds a new instance of the sspBC adapter
+func Builder(bidderName openrtb_ext.BidderName, config config.Adapter) (adapters.Bidder, error) {
+	// find path to template file
+	pathToTemplate := "./adapters/sspbc/bannerTemplate.html"
+	workingDir, err := os.Getwd()
+	if err == nil && strings.HasSuffix(workingDir, "sspbc") {
+		// this is a test running in adapter's directory
+		pathToTemplate = "bannerTemplate.html"
+	} else if err != nil {
+		// this error does not break createBannerAd flow
+		glog.Errorf("SSPBC: Cannot get working directory, assuming default path")
+	}
 
+	bannerTemplate, err := template.ParseFiles(pathToTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	bidder := &SspbcAdapter{
+		endpoint:       config.Endpoint,
+		version:        version,
+		bannerTemplate: bannerTemplate,
+	}
+
+	return bidder, nil
+}
+
+func (a *SspbcAdapter) MakeRequests(request *openrtb2.BidRequest, requestInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
+	var errors []error
+
+	formattedRequest, err := formatSsbcRequest(a, request)
+	if err != nil {
+		glog.Errorf("SSPBC: cannot prepare request")
+		errors = append(errors, err)
+		return nil, errors
+	}
+
+	requestJSON, err := json.Marshal(formattedRequest)
+	if err != nil {
+		glog.Errorf("SSPBC: cannot marshal request")
+		errors = append(errors, err)
+		return nil, errors
+	}
+
+	requestData := &adapters.RequestData{
+		Method: "POST",
+		Uri:    fmt.Sprintf("%s?bdver=%s&inver=0", a.endpoint, a.version),
+		Body:   requestJSON,
+	}
+
+	return []*adapters.RequestData{requestData}, nil
+}
+
+func (a *SspbcAdapter) MakeBids(internalRequest *openrtb2.BidRequest, externalRequest *adapters.RequestData, externalResponse *adapters.ResponseData) (*adapters.BidderResponse, []error) {
+	/*
+		  proxy responds with the following format
+			{
+			"cur": "PLN",
+			"id": "...",
+			"seatbid": [
+				{
+					"bid": [
+						{
+							"adm": "....",
+							"adomain": [
+								"sspbc-test"
+							],
+							"crid": "1234",
+							"ext": {
+								"adlabel": "Reklama",
+								"pubid": "431",
+								"siteid": "237503",
+								"slotid": "005",
+								"tagid": "slot"
+							},
+							"h": 250,
+						"id": "...",
+								"impid": "005",
+								"price": 95.95,
+							"w": 300
+						}
+					],
+					"seat": "sspbc-test"
+				}
+			],
+			"sn": "sspbc-test"
+			}
+
+		Note - we cannot read site SN, since response.sn is not defined in
+		openRTB2.BidResponse structure
+
+		For now we set SN as sspbc_go
+
+		Long term SN should be returned in bid.ext
+	*/
+
+	var errors []error
+
+	if externalResponse.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+
+	if externalResponse.StatusCode != http.StatusOK {
+		err := &errortypes.BadServerResponse{
+			Message: fmt.Sprintf("Unexpected status code: %d.", externalResponse.StatusCode),
+		}
+		return nil, []error{err}
+	}
+
+	var response openrtb2.BidResponse
+	if err := json.Unmarshal(externalResponse.Body, &response); err != nil {
+		return nil, []error{err}
+	}
+
+	bidResponse := adapters.NewBidderResponseWithBidsCapacity(len(internalRequest.Imp))
+	bidResponse.Currency = response.Cur
+
+	for _, seatBid := range response.SeatBid {
+		for _, bid := range seatBid.Bid {
+			var BidType openrtb_ext.BidType
+			var BidId = bid.ImpID
+
+			/*
+			  here we should make a call to getBidType method, and based on detected type
+			  make call to createBannerAd, createVideoAd, createNativeAd methods
+
+			  for now we set it to "banner"
+			*/
+			BidType = openrtb_ext.BidTypeBanner
+
+			if BidExt, ok := a.adSlots[BidId]; ok {
+				var BidIdStored = BidExt.PbSlot
+				bid.ImpID = BidIdStored
+			} else {
+				glog.Errorf("SSPBC: BidExt for this bid.impid not found - %s", BidId)
+			}
+
+			// read additional data from proxy
+			var BidDataExt SsbcResponseExt
+			if err := json.Unmarshal(bid.Ext, &BidDataExt); err != nil {
+				glog.Errorf("SSPBC: cannot unmarshal Bid Ext data")
+				errors = append(errors, err)
+			} else {
+				var adCreationError error
+
+				// Prepare ads (using different methods for banner, native, video)
+
+				// BANNER
+				bid.AdM, adCreationError = a.createBannerAd(bid, BidDataExt, internalRequest, seatBid.Seat)
+
+				if adCreationError != nil {
+					glog.Errorf("SSPBC: cannot format creative")
+					errors = append(errors, err)
+				} else {
+					// append bid to responses
+					bidResponse.Bids = append(bidResponse.Bids, &adapters.TypedBid{
+						Bid:     &bid,
+						BidType: BidType,
+					})
+				}
+			}
+		}
+	}
+
+	return bidResponse, errors
+}
+
+func (a *SspbcAdapter) createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.BidRequest, seat string) (string, error) {
+	var mcad McAd
+
+	if strings.Contains(bid.AdM, "<!--preformatted-->") {
+		// Banner ad is already formatted
+		return bid.AdM, nil
+	}
+
+	// create McAd payload
+	mcad.Id = request.ID
+	mcad.Seat = seat
+	mcad.SeatBid = make([]openrtb2.SeatBid, 1)
+	mcad.SeatBid[0].Bid = make([]openrtb2.Bid, 1)
+	mcad.SeatBid[0].Bid[0] = bid
+	mcMarshalled, err := json.Marshal(mcad)
+	if err != nil {
+		glog.Errorf("SSPBC: Cannot Marshal mcad!")
+		return bid.AdM, err
+	}
+
+	mcEncoded := base64.URLEncoding.EncodeToString(mcMarshalled)
+
+	bannerData := &TemplatePayload{
+		SiteId:  ext.SiteId,
+		SlotId:  ext.SlotId,
+		AdLabel: ext.AdLabel,
+		PubId:   ext.PublisherId,
+		Page:    request.Site.Page,
+		Referer: request.Site.Ref,
+		McAd:    mcEncoded,
+	}
+
+	/*
+		Prepare banner html, using template file
+
+		Note: Prebidserver bidders have access only to gdpr data in user ext, which is not what we need (as mcad uses prebid.js gdpr format)
+		Therefore, we are not creating window.gdpr. This will force banner creative to execute it's own call to TCF2
+	*/
+
+	var filledTemplate bytes.Buffer
+	if err := a.bannerTemplate.Execute(&filledTemplate, bannerData); err != nil {
+		glog.Errorf("SSPBC: Cannot execute banner template")
+		return bid.AdM, err
+	}
+
+	/*
+		byteTemplate := []byte(filledTemplate.String())
+		fmt.Println(base64.StdEncoding.EncodeToString(byteTemplate)) */
+
+	return filledTemplate.String(), nil
+}
+
+func getImpSize(Imp openrtb2.Imp) string {
 	if Imp.Video != nil {
 		return fmt.Sprintf("%dx%d", Imp.Video.W, Imp.Video.H)
 	}
@@ -186,223 +404,4 @@ func formatSsbcRequest(a *SspbcAdapter, request *openrtb2.BidRequest) (*openrtb2
 	}
 
 	return request, nil
-}
-
-func createBannerAd(bid openrtb2.Bid, ext SsbcResponseExt, request *openrtb2.BidRequest, seat string) (string, error) {
-	var mcad McAd
-
-	if strings.Contains(bid.AdM, "<!--preformatted-->") {
-		// Banner ad is already formatted
-		return bid.AdM, nil
-	}
-
-	// create McAd payload
-	mcad.Id = request.ID
-	mcad.Seat = seat
-	mcad.SeatBid = make([]openrtb2.SeatBid, 1)
-	mcad.SeatBid[0].Bid = make([]openrtb2.Bid, 1)
-	mcad.SeatBid[0].Bid[0] = bid
-	mcMarshalled, err := json.Marshal(mcad)
-	if err != nil {
-		glog.Errorf("SSPBC: Cannot Marshal mcad!")
-		return bid.AdM, err
-	}
-
-	mcEncoded := base64.URLEncoding.EncodeToString(mcMarshalled)
-
-	bannerData := &TemplatePayload{
-		SiteId: ext.SiteId,
-		SlotId: ext.SlotId,
-		AdLabel: ext.AdLabel,
-		PubId: ext.PublisherId,
-		Page: request.Site.Page,
-		Referer: request.Site.Ref,
-		McAd: mcEncoded,
-	}
-
-	/*
-		Prepare banner html, using template file
-
-		Note: Prebidserver bidders have access only to gdpr data in user ext, which is not what we need (as mcad uses prebid.js gdpr format)
-		Therefore, we are not creating window.gdpr. This will force banner creative to execute it's own call to TCF2
-	*/
-	
-
-	// find path to template file
-	pathToTemplate := "./adapters/sspBC/bannerTemplate.html"
-	workingDir, err := os.Getwd()
-	if (err == nil && strings.HasSuffix(workingDir, "sspBC")) { 
-		// this is a test running in adapter's directory
-		pathToTemplate = "bannerTemplate.html"
-	} else if (err!= nil) {
-		// this error does not break createBannerAd flow
-		glog.Errorf("SSPBC: Cannot get working directory, assuming default path")	
-	}
-
-	bannerTemplate := template.Must(template.ParseFiles(pathToTemplate))
-
-	var filledTemplate bytes.Buffer
-	err = bannerTemplate.Execute(&filledTemplate, bannerData)
-	if err != nil {
-		glog.Errorf("SSPBC: Cannot execute banner template")
-		return bid.AdM, err
-	}
-
-	/* 
-	byteTemplate := []byte(filledTemplate.String())
-	fmt.Println(base64.StdEncoding.EncodeToString(byteTemplate)) */
-
-	return filledTemplate.String(), nil
-}
-
-// ---------------ADAPTER INTERFACE------------------
-// Builder builds a new instance of the sspBC adapter
-func Builder(bidderName openrtb_ext.BidderName, config config.Adapter) (adapters.Bidder, error) {
-
-	bidder := &SspbcAdapter{
-		endpoint: config.Endpoint,
-		version:  version,
-	}
-	return bidder, nil
-}
-
-func (a *SspbcAdapter) MakeRequests(request *openrtb2.BidRequest, requestInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
-	var errors []error
-
-	formattedRequest, err := formatSsbcRequest(a, request)
-	if err != nil {
-		glog.Errorf("SSPBC: cannot prepare request")
-		errors = append(errors, err)
-		return nil, errors
-	}
-
-	requestJSON, err := json.Marshal(formattedRequest)
-	if err != nil {
-		glog.Errorf("SSPBC: cannot marshal request")
-		errors = append(errors, err)
-		return nil, errors
-	}
-
-	requestData := &adapters.RequestData{
-		Method: "POST",
-		Uri:    fmt.Sprintf("%s?bdver=%s&inver=0", a.endpoint, a.version),
-		Body:   requestJSON,
-	}
-
-	return []*adapters.RequestData{requestData}, nil
-}
-
-func (a *SspbcAdapter) MakeBids(internalRequest *openrtb2.BidRequest, externalRequest *adapters.RequestData, externalResponse *adapters.ResponseData) (*adapters.BidderResponse, []error) {
-	/*
-		  proxy responds with the following format
-			{
-			"cur": "PLN",
-			"id": "...",
-			"seatbid": [
-				{
-					"bid": [
-						{
-							"adm": "....",
-							"adomain": [
-								"sspbc-test"
-							],
-							"crid": "1234",
-							"ext": {
-								"adlabel": "Reklama",
-								"pubid": "431",
-								"siteid": "237503",
-								"slotid": "005",
-								"tagid": "slot"
-							},
-							"h": 250,
-						"id": "...",
-								"impid": "005",
-								"price": 95.95,
-							"w": 300
-						}
-					],
-					"seat": "sspbc-test"
-				}
-			],
-			"sn": "sspbc-test"
-			}
-
-		Note - we cannot read site SN, since response.sn is not defined in
-		openRTB2.BidResponse structure
-
-		For now we set SN as sspbc_go
-
-		Long term SN should be returned in bid.ext
-	*/
-
-
-	var errors []error
-
-	if externalResponse.StatusCode == http.StatusNoContent {
-		return nil, nil
-	}
-
-	if externalResponse.StatusCode != http.StatusOK {
-		err := &errortypes.BadServerResponse{
-			Message: fmt.Sprintf("Unexpected status code: %d.", externalResponse.StatusCode),
-		}
-		return nil, []error{err}
-	}
-
-	var response openrtb2.BidResponse
-	if err := json.Unmarshal(externalResponse.Body, &response); err != nil {
-		return nil, []error{err}
-	}
-
-	bidResponse := adapters.NewBidderResponseWithBidsCapacity(len(internalRequest.Imp))
-	bidResponse.Currency = response.Cur
-
-	for _, seatBid := range response.SeatBid {
-		for _, bid := range seatBid.Bid {
-			var BidType openrtb_ext.BidType
-			var BidId = bid.ImpID
-
-			/*
-			  here we should make a call to getBidType method, and based on detected type
-			  make call to createBannerAd, createVideoAd, createNativeAd methods
-
-			  for now we set it to "banner"
-			*/
-			BidType = openrtb_ext.BidTypeBanner
-
-			if BidExt, ok := a.adSlots[BidId]; ok {
-				var BidIdStored = BidExt.PbSlot
-				bid.ImpID = BidIdStored
-			} else {
-				glog.Errorf("SSPBC: BidExt for this bid.impid not found - %s", BidId)
-			}
-
-			// read additional data from proxy
-			var BidDataExt SsbcResponseExt
-			if err := json.Unmarshal(bid.Ext, &BidDataExt); err != nil {
-				glog.Errorf("SSPBC: cannot unmarshal Bid Ext data")
-				errors = append(errors, err)
-			} else {
-				var adCreationError error
-
-				// Prepare ads (using different methods for banner, native, video)
-
-				// BANNER
-				bid.AdM, adCreationError = createBannerAd(bid, BidDataExt, internalRequest, seatBid.Seat)
-
-				if adCreationError != nil {
-					glog.Errorf("SSPBC: cannot format creative")
-					errors = append(errors, err)
-				} else {
-					// append bid to responses
-					bidResponse.Bids = append(bidResponse.Bids, &adapters.TypedBid{
-						Bid:     &bid,
-						BidType: BidType,
-					})
-				}
-			}
-		}
-	}
-
-	return bidResponse, errors
 }
