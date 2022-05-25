@@ -20,7 +20,7 @@ import (
 	"github.com/prebid/prebid-server/openrtb_ext"
 )
 
-const version = "0.1"
+const version = "5.6"
 
 // MC payload (for banner ads)
 type McAd struct {
